@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import sys
+import traceback
 from pathlib import Path
 
 # Import docling for document processing
@@ -59,6 +60,8 @@ def process_document(input_path: str, chunks_path: str, markdown_path: str):
         
     except Exception as e:
         print(f"Error processing document: {str(e)}")
+        print("Stack trace:")
+        traceback.print_exc()
         raise e
 
 def main():
