@@ -1,0 +1,42 @@
+# The test suite does run automatically — it is cheap, and a red suite should be
+# visible without anyone remembering to press a button. Image builds stay manual
+# (see build.yml).
+name: Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen --group dev
+
+      # Caching HF_HOME keeps the chunking tokenizer from being re-downloaded
+      # on every run; the suite works without it, just slower.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ hashFiles('uv.lock') }}
+
+      - run: uv run pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+        working-directory: tests/frontend
+      - run: npm test
+        working-directory: tests/frontend

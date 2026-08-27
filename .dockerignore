@@ -1,1 +1,15 @@
+# Keep the build context small. Models are no longer part of the context — the
+# Dockerfile downloads and warms them at build time instead.
+.git
+.github
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ulvio
+tests
+node_modules
+.DS_Store
 .env
+question.md
+README.md

@@ -47,18 +47,42 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 MAX_QUEUE_ENTRIES = 10
 
 
+# Set when the chunking tokenizer could not be loaded at import — almost always
+# a model-cache problem in the image. Surfaced on /health so the frontend can say
+# so, instead of the service dying at import and telling nobody.
+TOKENIZER_ERROR: str | None = None
+
+# Fallback used only if the tokenizer cannot be loaded. Docling derives this from
+# the model config, so it is right for all-MiniLM-L6-v2 but may be stale for
+# another model; TOKENIZER_ERROR is what tells you the value is a guess.
+_FALLBACK_MAX_TOKENS = 256
+
+
 def _docling_defaults() -> dict:
     """Docling's own defaults for the parameters we expose.
 
-    Instantiated rather than hardcoded: these are what docling does when handed
-    no options, so the README and the UI stay honest across upgrades.
+    Read off docling rather than hardcoded, so the README and the UI stay honest
+    across upgrades.
+
+    Instantiating HybridChunker touches the tokenizer, which means the HF cache.
+    A broken cache must not stop the service from starting: the frontend is
+    supposed to be where you find out what is wrong, and it cannot be if the
+    process exits at import.
     """
+    global TOKENIZER_ERROR
+
     pdf = PdfPipelineOptions()
-    chunker = HybridChunker()
+
+    try:
+        max_tokens = HybridChunker().tokenizer.max_tokens
+    except Exception as e:
+        TOKENIZER_ERROR = f"{type(e).__name__}: {e}"
+        max_tokens = _FALLBACK_MAX_TOKENS
+
     return {
         "do_ocr": pdf.do_ocr,
         "ocr_lang": list(pdf.ocr_options.lang),
-        "max_tokens": chunker.tokenizer.max_tokens,
+        "max_tokens": max_tokens,
         "tokenizer": DEFAULT_TOKENIZER,
         "output": "both",
         # Not exposed as request parameters, but worth reporting so the UI can

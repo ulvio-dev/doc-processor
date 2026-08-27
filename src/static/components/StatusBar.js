@@ -59,6 +59,14 @@ function StatusBar({ health, contract, connected, lastError }) {
         />
       ) : null}
 
+      {connected && health && health.tokenizer_error ? (
+        <Banner
+          icon="mdi:alert-circle"
+          title="The chunking tokenizer failed to load — chunking will not work"
+          detail={`${health.tokenizer_error} — the model cache in this image is incomplete. Markdown-only conversions still work.`}
+        />
+      ) : null}
+
       {connected && busy ? (
         <Banner
           icon="mdi:tray-full"

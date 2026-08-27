@@ -25,6 +25,22 @@ async def test_health_reports_queue_and_libreoffice(client):
     assert body["processing"] is False
     # .doc support hinges on this, so it must always be reported.
     assert isinstance(body["libreoffice"], bool)
+    # None here means the chunking tokenizer loaded; a string is the reason it
+    # did not. Either way the key must exist, since the UI keys off it.
+    assert "tokenizer_error" in body
+
+
+async def test_health_reports_a_broken_tokenizer_instead_of_hiding_it(client, app_module, monkeypatch):
+    """A broken model cache must be visible, not fatal.
+
+    The service deliberately starts with an unusable tokenizer so the frontend
+    can say what is wrong; if it exited at import there would be nothing to ask.
+    """
+    monkeypatch.setattr("src.process_doc.TOKENIZER_ERROR", "OSError: no cached model")
+    async with client as c:
+        body = (await c.get("/health")).json()
+    assert body["status"] == "healthy"
+    assert body["tokenizer_error"] == "OSError: no cached model"
 
 
 async def test_contract_endpoint_states_the_real_limits(client):

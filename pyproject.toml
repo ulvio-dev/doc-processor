@@ -9,11 +9,18 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "python-multipart",
+    # torch/torchvision arrive via docling, but they are declared here on
+    # purpose: [tool.uv.sources] below only redirects *direct* dependencies, so
+    # without these lines the CPU index is silently ignored and the image gets
+    # the multi-GB CUDA build. Verified: dropping them yields torch+cu130.
+    "torch",
+    "torchvision",
 ]
 
 # docling pulls torch. Only the CPU build is ever needed — the service runs on
 # x86 CPU nodes — and the CUDA wheels are several GB, so pin the index here
-# rather than passing --extra-index-url at every install site.
+# rather than passing --extra-index-url at every install site (which is what
+# the old Dockerfile did).
 [dependency-groups]
 dev = [
     "pytest",

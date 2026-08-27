@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.formparsers import MultiPartParser
 from starlette.responses import JSONResponse, RedirectResponse, StreamingResponse
 
+from src import process_doc
 from src.process_doc import (
     ACCEPTED_FORMATS,
     DEFAULTS,
@@ -387,6 +388,10 @@ async def health():
         # .doc conversion goes through LibreOffice. If this is false in a
         # deployment, .doc uploads fail and this is why.
         "libreoffice": libreoffice_available(),
+        # None when the chunking tokenizer loaded. A string means the model cache
+        # in this image is broken and chunking will fail — the single most likely
+        # deployment problem, so it is reported rather than left to a stack trace.
+        "tokenizer_error": process_doc.TOKENIZER_ERROR,
     }
 
 
@@ -418,6 +423,7 @@ async def api_contract():
         "heartbeat_seconds": HEARTBEAT_SECONDS,
         "accepted_extensions": sorted(ACCEPTED_FORMATS),
         "libreoffice": libreoffice_available(),
+        "tokenizer_error": process_doc.TOKENIZER_ERROR,
         "defaults": DEFAULTS,
         "output_choices": list(OUTPUT_CHOICES),
     }
