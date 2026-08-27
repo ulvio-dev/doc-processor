@@ -1,0 +1,14 @@
+{
+  "name": "doc-processor-frontend-tests",
+  "private": true,
+  "description": "Renders the build-free frontend in jsdom the way the browser does",
+  "scripts": {
+    "test": "node render.test.js"
+  },
+  "devDependencies": {
+    "@babel/standalone": "^7.24.0",
+    "jsdom": "^24.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}
