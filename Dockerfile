@@ -50,24 +50,40 @@ ENV DOCLING_ARTIFACTS_PATH=/root/.cache/docling/models
 
 RUN docling-tools models download
 
-# Warm the chunking tokenizer into HF_HOME by instantiating the thing that uses
-# it, rather than copying a hand-maintained cache tree into the image.
+COPY main.py ./
+COPY src/ ./src/
+
+# Warm the chunking tokenizer into HF_HOME, rather than copying a
+# hand-maintained cache tree into the image. The repo used to carry
+# .hybrid-chunk-model/ for this. That cache holds only tokenizer files, and
+# docling 2.123's HuggingFaceTokenizer also loads the model's config.json to
+# derive max_tokens — so the copied tree was incomplete and the service died at
+# import with "couldn't connect to huggingface.co" under HF_HUB_OFFLINE.
+# Fetching exactly what is needed cannot drift out of date the same way.
 #
-# The repo used to carry .hybrid-chunk-model/ for this. That cache holds only
-# tokenizer files, and docling 2.123's HuggingFaceTokenizer also loads the
-# model's config.json to derive max_tokens — so the copied tree is now
-# incomplete and the service died at import with "couldn't connect to
-# huggingface.co" under HF_HUB_OFFLINE. Letting docling fetch exactly what it
-# needs cannot drift out of date the same way.
-RUN python -c "from docling.chunking import HybridChunker; HybridChunker(); print('tokenizer cached')"
+# Which tokenizer is read off the service instead of named here:
+# DEFAULT_TOKENIZER is not docling's default any more (see src/process_doc.py),
+# and a second copy of that name is a copy that can drift. The cost of importing
+# it from src/ is that this layer rebuilds on any source change; it fetches
+# tokenizer files only, not model weights.
+#
+# Every tokenizer the API accepts is warmed, not just the default: /process
+# rejects anything outside TOKENIZER_CHOICES precisely because HF_HUB_OFFLINE
+# below means an uncached model cannot be fetched at runtime. The two lists are
+# the same list, which is why this reads it rather than repeating it.
+#
+# Tokenizer files only — a few MB each. Qwen3-Embedding-8B's 16 GB of weights
+# are never downloaded; nothing here embeds anything.
+RUN python -c "\
+from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer; \
+from src.process_doc import TOKENIZER_CHOICES, DEFAULT_MAX_TOKENS; \
+[HuggingFaceTokenizer.from_pretrained(t, max_tokens=DEFAULT_MAX_TOKENS) for t in TOKENIZER_CHOICES]; \
+print('tokenizers cached:', ', '.join(TOKENIZER_CHOICES))"
 
 # Nothing should reach the network at runtime; the models above are all baked in.
 # Set as a safety net so a missing model fails loudly at startup instead of
 # silently downloading hundreds of MB on a pod's first request.
 ENV HF_HUB_OFFLINE=1
-
-COPY main.py ./
-COPY src/ ./src/
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1

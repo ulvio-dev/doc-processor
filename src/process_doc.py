@@ -52,39 +52,42 @@ MAX_QUEUE_ENTRIES = 10
 # so, instead of the service dying at import and telling nobody.
 TOKENIZER_ERROR: str | None = None
 
-# Fallback used only if the tokenizer cannot be loaded. Docling derives this from
-# the model config, so it is right for all-MiniLM-L6-v2 but may be stale for
-# another model; TOKENIZER_ERROR is what tells you the value is a guess.
-_FALLBACK_MAX_TOKENS = 256
-
 
 def _docling_defaults() -> dict:
-    """Docling's own defaults for the parameters we expose.
+    """The defaults actually in force for the parameters we expose.
 
     Read off docling rather than hardcoded, so the README and the UI stay honest
-    across upgrades.
+    across upgrades. `max_tokens` is the exception: that one is ours, and
+    DEFAULT_MAX_TOKENS is where it is set and explained.
 
-    Instantiating HybridChunker touches the tokenizer, which means the HF cache.
-    A broken cache must not stop the service from starting: the frontend is
-    supposed to be where you find out what is wrong, and it cannot be if the
-    process exits at import.
+    Loading the tokenizer touches the HF cache. A broken cache must not stop the
+    service from starting: the frontend is supposed to be where you find out
+    what is wrong, and it cannot be if the process exits at import.
     """
     global TOKENIZER_ERROR
 
     pdf = PdfPipelineOptions()
+    chunker_fields = HybridChunker.model_fields
 
     try:
-        max_tokens = HybridChunker().tokenizer.max_tokens
+        # The result is discarded; what matters is that loading the default
+        # tokenizer proves the HF cache holds it. Load the one the service
+        # actually chunks with — a bare HybridChunker() would only prove
+        # docling's own default is cached, which is no longer the same model.
+        HuggingFaceTokenizer.from_pretrained(
+            DEFAULT_TOKENIZER, max_tokens=DEFAULT_MAX_TOKENS
+        )
     except Exception as e:
         TOKENIZER_ERROR = f"{type(e).__name__}: {e}"
-        max_tokens = _FALLBACK_MAX_TOKENS
 
     return {
         "do_ocr": pdf.do_ocr,
         "ocr_lang": list(pdf.ocr_options.lang),
-        "max_tokens": max_tokens,
+        "max_tokens": DEFAULT_MAX_TOKENS,
         "tokenizer": DEFAULT_TOKENIZER,
         "output": "both",
+        "merge_peers": chunker_fields["merge_peers"].default,
+        "repeat_table_header": chunker_fields["repeat_table_header"].default,
         # Not exposed as request parameters, but worth reporting so the UI can
         # show what the conversion is actually doing.
         "do_table_structure": pdf.do_table_structure,
@@ -93,9 +96,46 @@ def _docling_defaults() -> dict:
     }
 
 
-# The chunking model baked into the image (.hybrid-chunk-model/), and docling's
-# own HybridChunker default.
-DEFAULT_TOKENIZER = "sentence-transformers/all-MiniLM-L6-v2"
+# The chunking tokenizer, baked into the image at build time. NOT docling's own
+# default (all-MiniLM-L6-v2), which is English-only: it splits Dutch into 1.5×
+# more tokens than the XLM-R tokenizer every multilingual embedding model uses
+# (2.81 vs 1.87 tokens per word, measured), so a budget counted in its tokens
+# buys half the text it looks like it buys.
+#
+# The tokenizer is only ever used to *count*, so the number is meaningful only
+# if the consumer embeds with the same count. Every XLM-R-derived model —
+# multilingual-e5, bge-m3, gte-multilingual, jina-v3, the Dutch-trimmed
+# clips/e5-*-trm-nl — tokenizes identically, so this choice does not tie the
+# caller to one embedding model.
+#
+# See docs/docling-performance.md.
+DEFAULT_TOKENIZER = "intfloat/multilingual-e5-large"
+
+# Chunk budget, ours rather than docling's (which derives it from the model
+# config). 450 leaves headroom under the 512-token window of the e5/XLM-R family
+# for the `query:`/`passage:` prefix and special tokens, while keeping whole
+# procedure sections in one chunk: measured on Dutch procedures, 350 counted in
+# MiniLM tokens produced twice as many chunks at half the size the embedding
+# model would see. Pass max_tokens per request to override.
+DEFAULT_MAX_TOKENS = 450
+
+# The tokenizers baked into the image, and therefore the only ones a request may
+# ask for: the container runs with HF_HUB_OFFLINE=1, so anything else cannot be
+# fetched and would fail mid-conversion, after the caller has already waited for
+# the document to convert. Rejecting it up front is the difference between a 400
+# and a puzzling stack trace at 80 % progress.
+#
+# Qwen counts differently from the XLM-R family (2.31 vs 1.87 tokens per Dutch
+# word, measured), so a budget carried over between them does not mean the same
+# thing — 450 e5 tokens is roughly 550 Qwen tokens of the same text.
+#
+# Adding one here is not enough on its own; it also has to be warmed in the
+# Dockerfile, which reads this tuple.
+TOKENIZER_CHOICES = (
+    DEFAULT_TOKENIZER,
+    "Qwen/Qwen3-Embedding-8B",
+    "sentence-transformers/all-MiniLM-L6-v2",
+)
 
 DEFAULTS = _docling_defaults()
 
@@ -116,6 +156,8 @@ class ProcessParams:
     ocr_lang: list[str] = field(default_factory=list)
     max_tokens: int | None = None
     tokenizer: str = DEFAULT_TOKENIZER
+    merge_peers: bool = DEFAULTS["merge_peers"]
+    repeat_table_header: bool = DEFAULTS["repeat_table_header"]
 
     @property
     def wants_markdown(self) -> bool:
@@ -158,12 +200,14 @@ def _build_converter(params: ProcessParams, fmt: InputFormat) -> DocumentConvert
 
 
 def _build_chunker(params: ProcessParams) -> HybridChunker:
-    if params.max_tokens is None and params.tokenizer == DEFAULT_TOKENIZER:
-        return HybridChunker()
     tokenizer = HuggingFaceTokenizer.from_pretrained(
-        params.tokenizer, max_tokens=params.max_tokens
+        params.tokenizer, max_tokens=params.max_tokens or DEFAULT_MAX_TOKENS
     )
-    return HybridChunker(tokenizer=tokenizer)
+    return HybridChunker(
+        tokenizer=tokenizer,
+        merge_peers=params.merge_peers,
+        repeat_table_header=params.repeat_table_header,
+    )
 
 
 # Called between stages so the caller can emit SSE progress. Blocking function,
@@ -209,7 +253,13 @@ def process_document(
     if params.wants_chunks:
         report("chunking", 80)
         chunker = _build_chunker(params)
-        chunks = [chunk.text for chunk in chunker.chunk(document)]
+        # contextualize(), not chunk.text: the headings a chunk sits under live
+        # in chunk.meta, and dropping them makes "- 3 st." under "Materiaal"
+        # indistinguishable from the same line under "Plaatsing". HybridChunker
+        # already counts tokens on the contextualized form, so the budget
+        # assumes these are here — emitting chunk.text paid for them and threw
+        # them away.
+        chunks = [chunker.contextualize(chunk=chunk) for chunk in chunker.chunk(document)]
 
     report("done", 100)
 
@@ -228,6 +278,8 @@ def process_document(
                 "ocr_lang": params.ocr_lang,
                 "max_tokens": params.max_tokens or DEFAULTS["max_tokens"],
                 "tokenizer": params.tokenizer,
+                "merge_peers": params.merge_peers,
+                "repeat_table_header": params.repeat_table_header,
             },
         },
     }

@@ -10,7 +10,12 @@ import asyncio
 
 import pytest
 
-from src.process_doc import MAX_QUEUE_ENTRIES, MAX_UPLOAD_BYTES
+from src.process_doc import (
+    DEFAULT_TOKENIZER,
+    MAX_QUEUE_ENTRIES,
+    MAX_UPLOAD_BYTES,
+    TOKENIZER_CHOICES,
+)
 from tests.util import final, positions, read_sse, statuses
 
 # ---------------------------------------------------------------------------
@@ -50,6 +55,10 @@ async def test_contract_endpoint_states_the_real_limits(client):
     assert body["max_queue_entries"] == MAX_QUEUE_ENTRIES
     assert sorted(body["accepted_extensions"]) == [".doc", ".docx", ".pdf"]
     assert body["output_choices"] == ["markdown", "chunks", "both"]
+    # The UI builds its tokenizer dropdown from this, and /process validates
+    # against the same tuple, so an option it offers is always accepted.
+    assert body["tokenizer_choices"] == list(TOKENIZER_CHOICES)
+    assert body["defaults"]["tokenizer"] == DEFAULT_TOKENIZER
     assert "max_tokens" in body["defaults"]
 
 
@@ -103,6 +112,29 @@ async def test_invalid_max_tokens_is_400(client, upload, stub_conversion):
     async with client as c:
         r = await c.post("/process", files=upload(), data={"max_tokens": "lots"})
     assert r.status_code == 400
+
+
+async def test_an_uncached_tokenizer_is_rejected_up_front(client, upload, stub_conversion):
+    """A model that is not in the image cannot be fetched — the container is
+    offline. Failing at request time beats failing in the chunker, after the
+    caller has already waited out the conversion."""
+    stub_conversion()
+    async with client as c:
+        r = await c.post(
+            "/process", files=upload(), data={"tokenizer": "openai/text-embedding-3-small"}
+        )
+    assert r.status_code == 400
+    assert "openai/text-embedding-3-small" in r.text
+    # The error names what *is* accepted, rather than only what is not.
+    assert DEFAULT_TOKENIZER in r.text
+
+
+async def test_every_offered_tokenizer_is_accepted(client, upload, stub_conversion):
+    stub_conversion()
+    async with client as c:
+        for name in TOKENIZER_CHOICES:
+            r = await c.post("/process", files=upload(), data={"tokenizer": name})
+            assert r.status_code == 200, f"{name} is offered but rejected"
 
 
 async def test_a_rejection_never_reserves_a_queue_slot(client, upload, app_module):
@@ -163,7 +195,7 @@ async def test_parameters_reach_the_conversion(client, upload, app_module, monke
             "/process",
             files=upload(),
             data={"output": "chunks", "do_ocr": "false", "max_tokens": "77",
-                  "ocr_lang": "nl,fr"},
+                  "ocr_lang": "nl,fr", "merge_peers": "false"},
         ) as r:
             await read_sse(r)
 
@@ -172,6 +204,8 @@ async def test_parameters_reach_the_conversion(client, upload, app_module, monke
     assert params.do_ocr is False
     assert params.max_tokens == 77
     assert params.ocr_lang == ["nl", "fr"]
+    assert params.merge_peers is False
+    assert params.repeat_table_header is True  # unset in the form, so the default
 
 
 async def test_conversion_failure_becomes_an_error_event(client, upload, stub_conversion):

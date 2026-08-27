@@ -17,6 +17,9 @@ function UploadCard({ contract, onEvent, onFinish, running, setRunning }) {
     if (!contract) return;
     setOutput(contract.defaults.output);
     setDoOcr(contract.defaults.do_ocr);
+    // The tokenizer is a fixed list now, so the form holds a real value rather
+    // than a blank meaning "whatever the service picks".
+    setTokenizer(contract.defaults.tokenizer);
   }, [contract]);
 
   const maxBytes = contract ? contract.max_upload_bytes : 20 * 1024 * 1024;
@@ -57,7 +60,7 @@ function UploadCard({ contract, onEvent, onFinish, running, setRunning }) {
     body.append('do_ocr', String(doOcr));
     if (ocrLang.trim()) body.append('ocr_lang', ocrLang.trim());
     if (String(maxTokens).trim()) body.append('max_tokens', String(maxTokens).trim());
-    if (tokenizer.trim()) body.append('tokenizer', tokenizer.trim());
+    if (tokenizer) body.append('tokenizer', tokenizer);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -160,15 +163,18 @@ function UploadCard({ contract, onEvent, onFinish, running, setRunning }) {
 
           <Field
             label="Tokenizer"
-            help="Blank uses the model baked into the image."
+            help="Only tokenizers baked into the image can be chosen — the service is offline at runtime."
             defaultHint={defaults.tokenizer}
           >
-            <TextInput
-              placeholder={defaults.tokenizer}
+            <Select
               value={tokenizer}
               onChange={e => setTokenizer(e.target.value)}
               disabled={output === 'markdown'}
-            />
+            >
+              {(contract ? contract.tokenizer_choices : []).map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </Select>
           </Field>
 
           <Field

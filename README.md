@@ -42,8 +42,10 @@ limits below are compiled in rather than tunable via environment variables.
 |---|---|---|---|
 | `file` | file | — | **required**, max 20 MB |
 | `output` | `markdown` \| `chunks` \| `both` | `both` | skip work you do not need |
-| `max_tokens` | int | `256` | chunk size; ignored when `output=markdown` |
-| `tokenizer` | string | `sentence-transformers/all-MiniLM-L6-v2` | must be present in the image's model cache |
+| `max_tokens` | int | `450` | chunk budget; ignored when `output=markdown` |
+| `tokenizer` | enum | `intfloat/multilingual-e5-large` | one of `GET /api/contract`'s `tokenizer_choices`; anything else is a 400 |
+| `merge_peers` | bool | `true` | fuse undersized chunks that share a heading |
+| `repeat_table_header` | bool | `true` | repeat the header row when a table spans chunks |
 | `do_ocr` | bool | `true` | see [Performance](#performance) |
 | `ocr_lang` | comma-separated | *(docling decides)* | e.g. `nl,fr`; only used when `do_ocr` |
 
@@ -52,11 +54,14 @@ Defaults are read off docling at startup rather than hardcoded, so
 upgrade changes one, that endpoint and the UI change with it — this table is the
 copy that can go stale.
 
+`max_tokens` and `tokenizer` are the exceptions: both are ours, not docling's.
+See [Chunking](#chunking).
+
 ```bash
 curl -N -X POST http://localhost:8000/process \
   -F "file=@report.pdf" \
   -F "output=both" \
-  -F "max_tokens=256"
+  -F "max_tokens=450"
 ```
 
 `-N` matters: without it curl buffers and you see nothing until the conversion
@@ -121,6 +126,75 @@ banner, so a `.doc` upload failing is diagnosable rather than mysterious.
 
 docling itself supports far more (xlsx, pptx, html, images, audio). The narrow
 list is deliberate: accepting a format means owning its failure modes.
+
+## Chunking
+
+**Chunks carry the headings they sit under.** A chunk is emitted as docling's
+*contextualized* form — the heading path is prepended to the body — so a bare
+list item arrives as
+
+```
+DAKRAMEN
+Materiaal
+- Velux GGL 3060 MK04 dakvenster - 3 st.
+```
+
+rather than as the last line alone. Without it, the same line under `Materiaal`
+and under `Plaatsing` is identical text and a retriever cannot tell them apart.
+`HybridChunker` counts tokens on this form, so the budget assumes the headings
+are present; emitting the bare body paid for them and threw them away.
+
+Headings are never merged across: docling only fuses adjacent chunks that share
+the same heading path, so section boundaries are always chunk boundaries. That
+is not configurable, and should not be.
+
+**The tokenizer is `intfloat/multilingual-e5-large`, not docling's
+all-MiniLM-L6-v2**, and that is a deliberate choice rather than an upgrade for
+its own sake. The tokenizer is used only to *count* — it decides where chunks
+merge and split — so the count is meaningful only if the consumer embeds with
+the same one. MiniLM is English-only and splits Dutch into 1.5× more tokens than
+the XLM-R tokenizer every multilingual embedding model uses (2.81 vs 1.87 tokens
+per word, measured), so a budget counted in its tokens buys half the text it
+looks like it buys.
+
+Every XLM-R-derived model counts identically — multilingual-e5, bge-m3,
+gte-multilingual, jina-v3, the Dutch-trimmed clips/e5-*-trm-nl — so this default
+does not tie a caller to one embedding model.
+
+`tokenizer` accepts a **fixed list**, served as `tokenizer_choices` on
+`GET /api/contract` and rendered as the dropdown in the UI:
+
+| Value | Tokens per Dutch word | For |
+|---|---|---|
+| `intfloat/multilingual-e5-large` *(default)* | 1.87 | the XLM-R family: multilingual-e5, bge-m3, gte-multilingual, jina-v3, clips/e5-*-trm-nl |
+| `Qwen/Qwen3-Embedding-8B` | 2.31 | any Qwen3 embedding model — 0.6B, 4B and 8B share one tokenizer |
+| `sentence-transformers/all-MiniLM-L6-v2` | 2.81 | docling's own default, English |
+
+The list is closed rather than free text because the container runs with
+`HF_HUB_OFFLINE=1`: a model that is not baked into the image cannot be fetched,
+and the failure would otherwise land in the chunker after the document has
+already been converted. Adding one means adding it to `TOKENIZER_CHOICES` and
+rebuilding, since the Dockerfile warms exactly that list.
+
+The budgets are not interchangeable across those rows: 450 e5 tokens is about
+550 Qwen tokens of the same text, so switching tokenizer without moving
+`max_tokens` changes chunk size by a third.
+
+**`max_tokens` defaults to 450**, also ours rather than docling's, which derives
+its default from the tokenizer's model config. 450 leaves headroom under the
+512-token window of the e5/XLM-R family for the `query:`/`passage:` prefix and
+special tokens, while keeping whole sections in one chunk. Override per request.
+
+The reasoning and the measurements are in
+[docs/docling-performance.md](docs/docling-performance.md).
+
+Two knobs docling supports and this service passes through: `merge_peers` and
+`repeat_table_header`, both `true`. There is deliberately **no** `min_tokens`,
+`target_tokens` or `overlap_tokens`: docling has no concept of any of them.
+`merge_peers` is the closest thing to a minimum — it merges undersized chunks,
+but only within a heading and only up to `max_tokens`, so no floor can be
+promised. Overlap would have to be built here, and the heading context above is
+what it would mostly have been buying.
 
 ## Queueing
 

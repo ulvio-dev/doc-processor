@@ -38,6 +38,7 @@ from src.process_doc import (
     MAX_QUEUE_ENTRIES,
     MAX_UPLOAD_BYTES,
     OUTPUT_CHOICES,
+    TOKENIZER_CHOICES,
     ProcessParams,
     UnsupportedFormat,
     detect_format,
@@ -237,6 +238,18 @@ def _parse_params(form) -> ProcessParams:
         if max_tokens < 1:
             raise HTTPException(400, "max_tokens must be positive")
 
+    # Blank means the default. Anything else has to be one of the tokenizers
+    # baked into the image — the container is offline, so an unknown model would
+    # otherwise fail inside the chunker, after the document has already been
+    # converted and the caller has already waited for it.
+    tokenizer = (form.get("tokenizer") or DEFAULTS["tokenizer"]).strip()
+    if tokenizer not in TOKENIZER_CHOICES:
+        raise HTTPException(
+            400,
+            f"tokenizer must be omitted, or one of {', '.join(TOKENIZER_CHOICES)} "
+            f"(got {tokenizer!r}) — only these are cached in this image",
+        )
+
     raw_lang = (form.get("ocr_lang") or "").strip()
     ocr_lang = [p.strip() for p in raw_lang.replace(" ", ",").split(",") if p.strip()]
 
@@ -245,7 +258,11 @@ def _parse_params(form) -> ProcessParams:
         do_ocr=_as_bool(form.get("do_ocr"), DEFAULTS["do_ocr"]),
         ocr_lang=ocr_lang,
         max_tokens=max_tokens,
-        tokenizer=(form.get("tokenizer") or DEFAULTS["tokenizer"]).strip(),
+        tokenizer=tokenizer,
+        merge_peers=_as_bool(form.get("merge_peers"), DEFAULTS["merge_peers"]),
+        repeat_table_header=_as_bool(
+            form.get("repeat_table_header"), DEFAULTS["repeat_table_header"]
+        ),
     )
 
 
@@ -426,6 +443,7 @@ async def api_contract():
         "tokenizer_error": process_doc.TOKENIZER_ERROR,
         "defaults": DEFAULTS,
         "output_choices": list(OUTPUT_CHOICES),
+        "tokenizer_choices": list(TOKENIZER_CHOICES),
     }
 
 

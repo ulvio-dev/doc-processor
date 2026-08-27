@@ -86,6 +86,24 @@ docker run --rm doc-processor:test python -c "import torch; print(torch.__versio
 # must print +cpu
 ```
 
+**Chunks are emitted via `chunker.contextualize(chunk)`, never `chunk.text`.**
+`chunk.text` is the body only; the headings live in `chunk.meta`, and dropping
+them makes a list item under one section indistinguishable from the same item
+under another. `HybridChunker` already counts tokens on the contextualized form,
+so the `max_tokens` budget assumes the headings are there. Guarded by
+`test_chunks_carry_their_heading_context`.
+
+**`DEFAULT_MAX_TOKENS = 350` is ours, not docling's.** Every other entry in
+`DEFAULTS` is read off docling at import so the UI and README cannot drift; this
+one deliberately overrides it (docling derives 256 from the all-MiniLM-L6-v2
+config). `_build_chunker` therefore always constructs the tokenizer explicitly —
+the old shortcut to a bare `HybridChunker()` would silently reinstate 256.
+
+**The `HybridChunker()` call in `_docling_defaults()` is a probe, not a read.**
+Its return value is discarded, but it is what sets `TOKENIZER_ERROR` when the
+model cache is broken, which `/health` and the UI report. Deleting it moves that
+failure to the first request.
+
 **`libgl1` and `libglib2.0-0` are mandatory.** On Linux CPU, docling's default
 `auto` OCR resolves to RapidOCR, which imports `cv2`. Without `libGL.so.1` even
 `docling-tools models download` fails at build time.

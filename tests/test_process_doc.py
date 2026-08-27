@@ -10,6 +10,8 @@ import pytest
 
 from src.process_doc import (
     ACCEPTED_FORMATS,
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_TOKENIZER,
     DEFAULTS,
     MAX_QUEUE_ENTRIES,
     MAX_UPLOAD_BYTES,
@@ -97,6 +99,39 @@ def test_progress_callback_reports_stages_in_order(docx_bytes):
     assert percentages[-1] == 100
 
 
+def test_chunking_defaults_are_ours_not_doclings():
+    """Both of these are deliberate choices, not whatever docling ships.
+
+    docling's default tokenizer is all-MiniLM-L6-v2, which is English-only and
+    counts Dutch 1.5× heavier than the XLM-R tokenizer the corpus is embedded
+    with — the budget below is meaningless unless it is counted in the same
+    tokens. See docs/docling-performance.md.
+    """
+    assert DEFAULT_TOKENIZER == "intfloat/multilingual-e5-large"
+    assert DEFAULT_MAX_TOKENS == 450
+    assert DEFAULTS["tokenizer"] == DEFAULT_TOKENIZER
+    assert DEFAULTS["max_tokens"] == 450
+    assert ProcessParams().max_tokens is None  # None means "use the default"
+    assert ProcessParams().tokenizer == DEFAULT_TOKENIZER
+
+
+def test_chunks_carry_their_heading_context(docx_bytes):
+    """The heading a chunk sits under must survive into the chunk text.
+
+    Regression: chunks were built from `chunk.text`, which is the body only, so
+    a paragraph arrived with no trace of the section it came from.
+    """
+    chunks = process_document(docx_bytes, "report.docx", ProcessParams(output="chunks"))["chunks"]
+
+    revenue = [c for c in chunks if "Revenue grew 12%" in c]
+    assert revenue, f"expected the revenue paragraph in some chunk, got {chunks!r}"
+    assert "Revenue" in revenue[0].split("Revenue grew 12%")[0]
+
+    costs = [c for c in chunks if "Operating costs" in c]
+    assert costs
+    assert "Costs" in costs[0].split("Operating costs")[0]
+
+
 def test_max_tokens_is_honoured(docx_bytes):
     """A smaller budget must not produce fewer chunks than a larger one."""
     small = process_document(
@@ -109,6 +144,23 @@ def test_max_tokens_is_honoured(docx_bytes):
     assert small["meta"]["params"]["max_tokens"] == 32
 
 
+def test_merge_peers_off_produces_more_chunks(docx_bytes):
+    """merge_peers is what fuses undersized same-heading chunks."""
+    merged = process_document(
+        docx_bytes, "report.docx", ProcessParams(output="chunks", merge_peers=True)
+    )
+    split = process_document(
+        docx_bytes, "report.docx", ProcessParams(output="chunks", merge_peers=False)
+    )
+    assert len(split["chunks"]) >= len(merged["chunks"])
+
+
+def test_chunking_defaults_are_doclings_own():
+    """These two we pass through rather than pick — unlike max_tokens."""
+    assert DEFAULTS["merge_peers"] is True
+    assert DEFAULTS["repeat_table_header"] is True
+
+
 def test_meta_echoes_the_params_used(docx_bytes):
     params = ProcessParams(output="both", do_ocr=False, max_tokens=128)
     result = process_document(docx_bytes, "report.docx", params)
@@ -116,6 +168,8 @@ def test_meta_echoes_the_params_used(docx_bytes):
     assert echoed["do_ocr"] is False
     assert echoed["max_tokens"] == 128
     assert echoed["output"] == "both"
+    assert echoed["merge_peers"] is True
+    assert echoed["repeat_table_header"] is True
 
 
 def test_unsupported_format_raises_before_any_work(docx_bytes):

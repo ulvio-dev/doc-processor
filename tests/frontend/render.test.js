@@ -122,6 +122,10 @@ setTimeout(() => {
     // Defaults must come from /api/contract, not be hardcoded in the UI.
     ['default tokenizer surfaced', text.includes(routes['/api/contract'].defaults.tokenizer)],
     ['default max_tokens surfaced', text.includes(String(routes['/api/contract'].defaults.max_tokens))],
+    // The tokenizer field is a closed list: every choice the service offers has
+    // to be selectable, or the UI can only ask for things /process rejects.
+    ['every tokenizer choice offered',
+      routes['/api/contract'].tokenizer_choices.every(t => text.includes(t))],
     ['queue section', text.includes('Queue')],
     ['queue history rendered', text.includes(routes['/api/queue'].jobs[0].id)],
     // The frontend is meant to be the first place you look when something is off.
