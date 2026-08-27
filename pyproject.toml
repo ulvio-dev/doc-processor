@@ -14,6 +14,20 @@ dependencies = [
 # docling pulls torch. Only the CPU build is ever needed — the service runs on
 # x86 CPU nodes — and the CUDA wheels are several GB, so pin the index here
 # rather than passing --extra-index-url at every install site.
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "httpx",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# The app is a flat main.py + src/ with no installable package, so tests
+# import `src.*` from the repo root rather than from site-packages.
+pythonpath = ["."]
+
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
