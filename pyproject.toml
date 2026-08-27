@@ -1,0 +1,24 @@
+[project]
+name = "doc-processor"
+version = "2.0.0"
+description = "Internal HTTP service that converts documents to markdown + chunks with docling, streaming progress over SSE"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "docling",
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+]
+
+# docling pulls torch. Only the CPU build is ever needed — the service runs on
+# x86 CPU nodes — and the CUDA wheels are several GB, so pin the index here
+# rather than passing --extra-index-url at every install site.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
