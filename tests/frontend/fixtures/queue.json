@@ -1,0 +1,33 @@
+{
+    "processing": false,
+    "queued": 0,
+    "depth": 0,
+    "max_entries": 10,
+    "jobs": [
+        {
+            "id": "job-0001",
+            "status": "complete",
+            "filename": "report.docx",
+            "size_bytes": 36685,
+            "params": {
+                "output": "both",
+                "do_ocr": true,
+                "ocr_lang": [],
+                "max_tokens": 256,
+                "tokenizer": "sentence-transformers/all-MiniLM-L6-v2"
+            },
+            "stage": "done",
+            "progress": 100,
+            "position": null,
+            "error": null,
+            "summary": {
+                "pages": null,
+                "chunk_count": 1,
+                "markdown_chars": 108
+            },
+            "created_at": 1787861184.937767,
+            "started_at": 1787861184.938308,
+            "finished_at": 1787861185.925144
+        }
+    ]
+}

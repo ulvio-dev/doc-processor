@@ -1,0 +1,45 @@
+[project]
+name = "doc-processor"
+version = "2.0.0"
+description = "Internal HTTP service that converts documents to markdown + chunks with docling, streaming progress over SSE"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "docling",
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    # torch/torchvision arrive via docling, but they are declared here on
+    # purpose: [tool.uv.sources] below only redirects *direct* dependencies, so
+    # without these lines the CPU index is silently ignored and the image gets
+    # the multi-GB CUDA build. Verified: dropping them yields torch+cu130.
+    "torch",
+    "torchvision",
+]
+
+# docling pulls torch. Only the CPU build is ever needed — the service runs on
+# x86 CPU nodes — and the CUDA wheels are several GB, so pin the index here
+# rather than passing --extra-index-url at every install site (which is what
+# the old Dockerfile did).
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "httpx",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# The app is a flat main.py + src/ with no installable package, so tests
+# import `src.*` from the repo root rather than from site-packages.
+pythonpath = ["."]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }

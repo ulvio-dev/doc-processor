@@ -1,0 +1,34 @@
+{
+  "endpoint": "POST /process",
+  "encoding": "multipart/form-data",
+  "response": "text/event-stream",
+  "max_upload_bytes": 20971520,
+  "max_queue_entries": 10,
+  "heartbeat_seconds": 15,
+  "accepted_extensions": [
+    ".doc",
+    ".docx",
+    ".pdf"
+  ],
+  "libreoffice": false,
+  "defaults": {
+    "do_ocr": true,
+    "ocr_lang": [],
+    "max_tokens": 450,
+    "tokenizer": "intfloat/multilingual-e5-large",
+    "output": "both",
+    "do_table_structure": true,
+    "table_mode": "accurate",
+    "num_threads": 4
+  },
+  "output_choices": [
+    "markdown",
+    "chunks",
+    "both"
+  ],
+  "tokenizer_choices": [
+    "intfloat/multilingual-e5-large",
+    "Qwen/Qwen3-Embedding-8B",
+    "sentence-transformers/all-MiniLM-L6-v2"
+  ]
+}
